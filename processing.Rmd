@@ -1,0 +1,184 @@
+---
+title: "mohs_hardness_processing"
+output: html_document
+date: "2023-11-18"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(psych)
+library(corrplot)
+library(factoextra)
+library(caret)
+```
+```{r Data Description}
+# Data description
+ # allelectrons_Total | Total number of electrons
+ # density_Total | Total elemental density
+ # allelectrons_Average | Atomic average number of electrons
+ # val_e_Average Atomic | average number of valence electrons
+ # atomicweight_Average | Atomic average atomic weight
+ # ionenergy_Average | Atomic average first IE
+ # el_neg_chi_Average | Atomic average Pauling electronegativity of the most common oxidation state
+ # R_vdw_element_Average | Atomic average van der Waals atomic radius
+ # R_cov_element_Average | Atomic average covalent atomic radius
+ # zaratio_Average Atomic | average atomic number to mass number ratio
+ # density_Average Atomic | average elemental density
+
+ # For those features that are atomic averages, values are computed as the sum of 
+ # the compositional feature (fi) divided by the number of atoms (n) present in
+ # the minerals empurical chemical forumal, or 
+ #          AA = (1/n)Eni=1fi
+```
+
+```{r Loading}
+# Loading in the data, can use one of two data sets (or both). The first one is 
+# genuine data while the second is synthetic data derived from the genuine data.
+# The synthetic data was the actual data provided by the comp.
+
+# Here is the genuine data not provided by the comp
+genuine_data = read.csv("data/Mineral_Dataset_Supplementary_Info.csv")
+genuine_data = genuine_data %>% select(-X)
+genuine_data
+# And here is the comp test and train
+comp_train = read.csv("data/train.csv")
+comp_train = comp_train %>% select(-id)
+
+comp_test = read.csv("data/test.csv")
+comp_test = comp_test %>% select(-id)
+combined_train = bind_rows(comp_train, genuine_data) %>% distinct()
+combined_train
+```
+
+```{r Histograms, corr_plots, boxplpots, and summaries}
+pairs.panels(genuine_data)
+pairs.panels(comp_train)
+pairs.panels(combined_train)
+
+data_list = list(genuine_data, comp_train, combined_train, comp_test)
+data_list[[ds_ind]]
+for (ds_ind in 1:length(data_list)){
+  data = data_list[[ds_ind]]
+  plot_grid = data %>% pivot_longer(cols=everything(), names_to = "Feature",
+                              values_to = 'values') %>% 
+  ggplot(aes(x=values)) +
+  geom_histogram(aes(y=..density..,
+                     color = 'cyan'))+
+  geom_density(fill = 'blue', alpha = 0.4)+
+  facet_wrap('Feature', scales = 'free')
+  
+  print(plot_grid)
+}
+
+for (ds_ind in 1:length(data_list)){
+  data = data_list[[ds_ind]]
+  plot_grid = data %>% pivot_longer(cols=everything(), names_to = "Feature",
+                              values_to = 'values') %>% 
+  ggplot(aes(y=values)) +
+  geom_boxplot()+
+  facet_wrap('Feature', scales = 'free')
+  
+  print(plot_grid)
+}
+
+for (ds_ind in 1:length(data_list)){
+  data = data_list[[ds_ind]]
+  plot_grid = data %>% pivot_longer(cols=everything(), names_to = "Feature",
+                              values_to = 'values') %>% 
+  ggplot(aes(y=values)) +
+  geom_point(x=)+
+  facet_wrap('Feature', scales = 'free')
+  
+  print(plot_grid)
+}
+
+for (ds_ind in 1:length(data_list)){
+  print(summary(data_list[[ds_ind]]))
+}
+
+for (ds_ind in 1:length(data_list)){
+  corr_mat = cor(data_list[[ds_ind]])
+  corrplot(corr_mat, method = 'number')
+}
+# Alright so there's a lot of correlation here
+# map(data_list, f(x, ))
+corr_mat = cor(combined_train)
+corrplot(corr_mat, method = 'number')
+```
+
+
+```{r}
+# Highly correlated pairs:
+#   -atomic_weight_average x all_electrons_average - 0.99
+#   -r_vdw_element_average x r_cov_element_average - 0.83
+#   -density_average x all_electrons_average - 0.80
+#   -density_average x atomic_weight_average - 0.80
+#   -el_neg_chi_avg x ion_energy_avg - 0.76
+
+ggplot(combined_train, aes(x=atomicweight_Average, y = allelectrons_Average))+
+  geom_point()+
+  geom_smooth()+
+  labs(title='atomicweight_Average X allelectrons_Average')
+
+ggplot(comp_train, aes(x=R_vdw_element_Average, y = R_cov_element_Average))+
+  geom_point()+
+  geom_smooth()+
+  labs(title='R_vdw_element_Average X R_cov_element_Average')
+
+ggplot(comp_train, aes(x=density_Average, y = allelectrons_Average))+
+  geom_point()+
+  geom_smooth()+
+  labs(title='density_Average X allelectrons_Average')
+
+ggplot(comp_train, aes(x=density_Average, y = atomicweight_Average))+
+  geom_point()+
+  geom_smooth()+
+  labs(title='density_Average X atomicweight_Average')
+
+ggplot(comp_train, aes(x=el_neg_chi_Average, y = ionenergy_Average))+
+  geom_point()+
+  geom_smooth()+
+  labs(title='el_neg_chi_Average X ionenergy_Average')
+
+ggplot(combined_train, aes(x=density_Average, y = Hardness))+
+  geom_point()+
+  geom_smooth()+
+  labs(title='density_Average X Hardness')
+
+# There seem to be a few examples of atoms with really low ion energy and el neg chi
+ggplot(data=comp_train, aes(x=ionenergy_Average, y=Hardness))+
+  geom_point()+
+  geom_smooth()
+
+ggplot(data=comp_train, aes(x=el_neg_chi_Average, y=Hardness))+
+  geom_point()+
+  geom_smooth()
+
+# Is it possible to have a 0 el_neg_chi_Average? Because like 70 observations have 0
+zero_el_neg = comp_train %>% select(Hardness, el_neg_chi_Average, ionenergy_Average) %>% arrange(el_neg_chi_Average) %>% filter(el_neg_chi_Average < 1)
+ggplot(zero_el_neg, aes(x=el_neg_chi_Average, y=Hardness, color = ionenergy_Average))+
+  geom_point()
+
+ggplot(zero_el_neg, aes(x=el_neg_chi_Average, y=ionenergy_Average))+
+  geom_hex()+
+
+genuine_data %>% select(Hardness, el_neg_chi_Average, ionenergy_Average) %>% arrange(el_neg_chi_Average)
+```
+
+
+```{r}
+# Data can be decomposed to 4 components with eigenvalues greater than 1
+KMO(genuine_data)
+bartlett.test(genuine_data)
+
+pr.genuine = prcomp(genuine_data, scale. = T)
+summary(pr.genuine)
+fviz_eig(pr.genuine, choice = 'eigenvalue')+
+  geom_hline(yintercept=1)
+```
+
+```{r}
+
+```
+
