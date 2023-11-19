@@ -11,6 +11,7 @@ library(psych)
 library(corrplot)
 library(factoextra)
 library(caret)
+library(factoextra)
 ```
 ```{r Data Description}
 # Data description
@@ -172,13 +173,111 @@ genuine_data %>% select(Hardness, el_neg_chi_Average, ionenergy_Average) %>% arr
 KMO(genuine_data)
 bartlett.test(genuine_data)
 
-pr.genuine = prcomp(genuine_data, scale. = T)
+pr.genuine = prcomp(genuine_data %>% select(-Hardness), scale. = T)
+pr.train = prcomp(comp_train %>% select(-Hardness), scale. = T)
 summary(pr.genuine)
 fviz_eig(pr.genuine, choice = 'eigenvalue')+
   geom_hline(yintercept=1)
+fviz_eig(pr.genuine, choice = 'variance', addlabels=T)+
+  geom_hline(yintercept=1)
+get_eig(pr.genuine)
+# 93% of variance explained by 4 components
+
+fviz_pca_biplot(pr.train)
+fviz_pca_ind(pr.train, col.ind = comp_train$Hardness)
+fviz_pca_var(pr.train)
+contrib_test = fviz_contrib(pr.train, choice = 'ind') +
+         theme_minimal() +
+         theme(axis.text.x = element_text(angle=45))
+pr.train$rotation
+get_eig(pr.train)
 ```
 
-```{r}
+```{r clustering?}
+# idk Kmeans maybe?
+combined_train_x = combined_train %>% select(-Hardness)
+scaled_combined_train_x = combined_train_x %>% scale() %>% as.data.frame()
+scaled_combined_train_x
 
+unscaled_combined_train_y = combined_train$Hardness
+
+fviz_nbclust(scaled_combined_train_x, kmeans, method = "silhouette")
+# Optimal number of clusters seems to be 3, but 2 seems good and all the way to 7 is meh
+for (num_centers in 2:6){
+  kmeans_train = kmeans(scaled_combined_train_x, centers = num_centers, iter.max = 100, nstart = 50)
+  viz = fviz_cluster(kmeans_train, scaled_combined_train_x)
+  print(viz)
+}
+
+kmeans_3_cent = kmeans(scaled_combined_train_x, centers = 3, iter.max = 100, nstart = 100)
+fviz_cluster(kmeans_3_cent, scaled_combined_train_x)
+kmeans_3_cent$withinss
+# Calculate distance of data point from cluster centers
+kmeans_3_cluster_distances = rdist()
+aberrant_data_points = c(10485,5494,10446)
+kmeans_abberant_data = scaled_combined_train_x[aberrant_data_points,]
+kmeans_abberant_data
+
+kmeans_aberrant_data_removed = scaled_combined_train_x[-aberrant_data_points,]
+kmeans_no_aberrant3 = kmeans(kmeans_aberrant_data_removed, centers = 3, iter.max = 100, nstart = 100)
+kmeans_no_aberrant3$size
+kmeans_no_aberrant4 = kmeans(kmeans_aberrant_data_removed, centers = 4, iter.max = 100, nstart = 100)
+fviz_cluster(kmeans_no_aberrant, kmeans_aberrant_data_removed)
+
+scaled_train_kmeans_label = kmeans_aberrant_data_removed %>% 
+                                mutate(centers_3 = as.factor(kmeans_no_aberrant3$cluster), 
+                                       centers_4 = as.factor(kmeans_no_aberrant4$cluster))
+
+scaled_train_kmeans_label %>% select(-centers_4) %>% group_by(centers_3) %>% 
+  pivot_longer(cols = -c(centers_3), names_to = 'Feature', values_to = 'vals') %>% 
+  ggplot(aes(y=vals, x=centers_3)) +
+  geom_boxplot() + 
+  facet_wrap(facets='Feature', scales = 'free')
+
+## Interesting, so weith 3 clusters, there are really stark differences in val_e_Average wherein cluster 2 has a much lower value than the other two. The same is true of R_vdw_element_Average, zaratio_Average, R_cov_element_Average, ioenergy_Average, and el_neg_chi_average. All three are differntiatd to some extent by allelectrons_Average, atomicweight_Average, and to some extent, density_average, R_cov_element_average, ad el_neg_chi_Average
+
+scaled_train_kmeans_label %>% select(-centers_3) %>% group_by(centers_4) %>% 
+  pivot_longer(cols = -c(centers_4), names_to = 'Feature', values_to = 'vals') %>% 
+  ggplot(aes(y=vals, x=centers_4)) +
+  geom_boxplot() + 
+  facet_wrap(facets='Feature', scales = 'free')
+
+kmeans_no_aberrant4$size
+# So it's definitely apparent that a small subset (81) observations are completely distinct from the others and can almost certainly be differentiated. The remaining 2-3 clusters will be harder to differentiate. With 4 clusters, group 3 is the largest (by alot) and those can be distinguised from 2 (80) and 3 (7632) using various plots. The differencesc between 3 and 1 are subtle though. zaratio_Avervage, R_cov_element_Aveage, and R_vdw_element_Average look ok, maybe val_e_Average
+
+# Checking to see if all the low points of cluster 2 are the same 80 points
+scaled_train_kmeans_label %>% filter(centers_4 == 2) 
+scaled_train_kmeans_label %>% filter(centers_4 == 3)
+# Ok so it seems like all the low points are from those same 80 points. That said, it looked like there weree a lot of exact repeating values, but comparing the number of unique values to those of the largest group (3) doesn't really seem to support that,they both seem to have a comaparatively similar number of unique values
+perc_unique_clust2 = sapply(scaled_train_kmeans_label %>% filter(centers_4 == 2) , function(x) length(unique(x))) / 80 * 100
+perc_unique_clust3 = sapply(scaled_train_kmeans_label %>% filter(centers_4 == 3), function(x) length(unique(x))) / 7632 * 100
+
+perc_unique_clust2_3 = t(perc_unique_clust2) %>% as.data.frame() %>% bind_rows(t(perc_unique_clust3) %>% as.data.frame())
+perc_unique_clust2_3
+
+
+which(scaled_train_kmeans_label$centers_4==2,) # Six observations from cluster two are from the genuine data - idx: 10395, 10552, 10558, 10718, 10786, 10938
+# Extract row idx for observations in cluster 2 so I can get the hardness values from the y data
+
+# hardness_by_cluster
+for (clust_num in 1:4){
+  viz = data.frame(cluster_2_hardness = unscaled_combined_train_y[which(scaled_train_kmeans_label$centers_4==clust_num,)]) %>% 
+  ggplot(aes(x=cluster_2_hardness))+
+  geom_histogram(aes(y=..density..))+
+  geom_density()
+  
+  print(viz)
+}
+# Takeaways: Cluster three has, on average, a higher hardness than the other clusters, though each cluster
+# has some number of observations that fall between 6 and 7.5
+
+data.frame(cluster_2_hardness = unscaled_combined_train_y[which(scaled_train_kmeans_label$centers_4==1,)]) %>% 
+  ggplot(aes(x=cluster_2_hardness))+
+  geom_histogram(aes(y=..density..))+
+  geom_density()
+data.frame(cluster_2_hardness = unscaled_combined_train_y[which(scaled_train_kmeans_label$centers_4==4,)]) %>% 
+  ggplot(aes(x=cluster_2_hardness))+
+  geom_histogram(aes(y=..density..))+
+  geom_density()
 ```
 
